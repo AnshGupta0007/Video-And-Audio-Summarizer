@@ -1,13 +1,13 @@
 📌 Video & Audio Summarizer
-AI-powered summarization tool that converts videos, audio files, YouTube links, or pasted text into:
+An AI-powered summarization tool that converts videos, audio files, YouTube links, or pasted text into:
 
 ✔ Accurate transcriptions (Native + English)
 ✔ Clean, concise summaries
 ✔ Audio summaries (TTS in Native + English)
 ✔ Fast-speed audio versions
-✔ Full pipeline automation (upload → transcribe → summarize → audio)
+✔ Fully automated workflow (upload → transcribe → summarize → audio)
 
-This project uses FastAPI, React, OpenAI Whisper, GPT-4o-mini, gTTS, and yt-dlp to provide a fast and seamless media-processing workflow.
+This project uses FastAPI, React, Tailwind CSS, OpenAI Whisper, GPT-4o-mini, gTTS, and yt-dlp to deliver a smooth and fast media-processing pipeline.
 
 🚀 Features
 🎥 Video Processing
@@ -15,71 +15,91 @@ Upload MP4 videos
 
 Automatic audio extraction (FFmpeg)
 
-Transcription + Summaries + TTS
-
-🎵 Audio Processing
-Upload MP3/WAV
-
-Native transcription (auto-detected language)
-
-English transcription
+Native + English transcription
 
 Dual summaries
 
-TTS audio output
+TTS audio generation
 
-1.5× fast audio generation
+1.5× Fast audio versions
+
+🎵 Audio Processing
+Upload MP3 / WAV
+
+Auto language detection
+
+Native + English transcription
+
+Dual summaries
+
+TTS generation
+
+Fast audio (1.5×)
 
 📝 Text Summaries
-Paste text or upload .txt file
+Paste plain text
+
+Upload .txt files
 
 Native summary
 
 English summary
 
-Extremely concise, context-preserving output
+Ultra-concise, context-preserving output
 
 ▶️ YouTube Summaries
-Supports normal YouTube links
+Supports:
+
+Normal YouTube links
+
+youtu.be
 
 Shorts
 
-youtu.be links
+Pipeline:
 
-Extracts audio → transcribes → summarizes
+Extract audio → Transcribe → Summarize → Output
 
 🎧 Audio Outputs
-Summary audio in original language
+Summary audio (native language)
 
-Summary audio in English
+Summary audio (English)
 
-Fast versions (1.5× speed)
+Fast audio (1.5×) versions
+
+Downloadable
 
 🌐 Frontend (React + Tailwind)
 Clean UI
 
-Drag & drop
+Drag & drop upload
 
-Processing logs
+Processing log
 
-8 output sections (full mode)
+Toggling output sections
 
-Reset, download, collapse/expand
+Download buttons
+
+Reset flow
+
+Responsive layout
 
 🖼️ Architecture Overview
-Frontend (React)
-→ Uploads media
-→ Shows progress logs
-→ Downloads results
-→ Calls backend endpoints
+Frontend (React + Vite + Tailwind)
+    ↓ Upload file / paste text / submit YouTube link
+    ↓ Shows progress logs
+    ↓ Displays results
+    ↓ Downloads files
+    → Calls Backend API
 
 Backend (FastAPI)
-→ Handles uploads
-→ Extracts audio via FFmpeg
-→ Calls Whisper for transcription
-→ Calls GPT-4o-mini for summaries
-→ Calls gTTS for speech output
-→ Stores temporary uploads & outputs
+    ↓ Handles uploads
+    ↓ Extracts audio via FFmpeg
+    ↓ Transcribes using OpenAI Whisper
+    ↓ Summarizes using GPT-4o-mini
+    ↓ Converts summaries to speech (gTTS)
+    ↓ Generates fast audio
+    → Returns results to frontend
 
 🛠️ Tech Stack
 Backend
@@ -87,13 +107,13 @@ FastAPI
 
 OpenAI Whisper API
 
-OpenAI GPT-4o-mini
+GPT-4o-mini (OpenAI Chat Completion API)
 
-yt-dlp
+gTTS
 
 FFmpeg
 
-gTTS
+yt-dlp
 
 python-multipart
 
@@ -102,16 +122,14 @@ python-dotenv
 Frontend
 React
 
-Tailwind CSS
-
 Vite
+
+Tailwind CSS
 
 Fetch API
 
 📦 Folder Structure
-css
-Copy code
-Video-Summarizer/
+Video-And-Audio-Summarizer/
 │
 ├── backend/
 │   ├── main.py
@@ -125,62 +143,62 @@ Video-Summarizer/
 │   ├── src/
 │   ├── public/
 │   ├── node_modules/
-│   ├── App.js
-│   └── package.json
+│   ├── package.json
+│   └── vite.config.js
 │
 └── README.md
+
 🔧 Installation & Setup
-1️⃣ Clone the repo
-bash
-Copy code
-git clone https://github.com/<your-username>/video-summarizer.git
-cd video-summarizer
+1️⃣ Clone the repository
+git clone https://github.com/AnshGupta0007/Video-And-Audio-Summarizer.git
+cd Video-And-Audio-Summarizer
+
 🖥️ Backend Setup (FastAPI)
-2️⃣ Create virtual environment
-bash
-Copy code
+2️⃣ Create a virtual environment
 cd backend
 python3 -m venv venv
 source venv/bin/activate
-3️⃣ Install dependencies
-nginx
-Copy code
-pip install -r requirements.txt
-4️⃣ Add your API key
-Create .env:
 
-ini
-Copy code
-OPENAI_API_KEY=sk-xxxx
-5️⃣ Start server
-nginx
+3️⃣ Install Python dependencies
+pip install -r requirements.txt
+
+4️⃣ Add your API key
+Create .env file inside backend/:
+OPENAI_API_KEY=sk-xxxxxx
+
+
+⚠️ Never commit your .env file.
+
+5️⃣ Start backend server
+bash
 Copy code
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
-Backend will start at:
+Backend runs at:
 
 arduino
 Copy code
 http://localhost:8000
-🌐 Frontend Setup (React)
-6️⃣ Start frontend
-arduino
+🌐 Frontend Setup (React + Vite)
+6️⃣ Install and run frontend
+bash
 Copy code
 cd frontend
 npm install
 npm run dev
-Frontend will run on:
+Frontend runs at:
 
 arduino
 Copy code
 http://localhost:5173
 🤝 Contributing
-Pull requests are welcome!
-If you want a feature added, feel free to open an issue.
+Contributions, issues, and feature requests are welcome!
+Feel free to open an Issue or PR.
 
 📜 License
-MIT License — free to use and modify.
+This project is licensed under the MIT License.
 
 ⭐ Support
-If you like this project, please star the repository ⭐
-It helps others discover it and motivates further development.
+If you find this project useful, please star ⭐ the repository!
+It helps others discover the project and motivates future improvements.
 
+```
