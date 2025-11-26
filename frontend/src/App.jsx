@@ -6,8 +6,29 @@ const API_KEY = import.meta.env.VITE_BACKEND_SECRET;
 
 const HEADER_ICON = "/mnt/data/Screenshot 2025-11-25 at 2.57.40 PM.png";
 
-// Remove invisible unicode
 const cleanText = (t = "") => (t || "").replace(/[\u200B-\u200F\uFEFF]/g, "").trim();
+
+/* -------------------------------------------------------
+   UNIVERSAL SECURE FETCH (Auto-adds API Key)
+------------------------------------------------------- */
+async function secureFetch(url, options = {}) {
+  const final = {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      "x-api-key": API_KEY,
+    },
+  };
+
+  const res = await fetch(url, final);
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Request failed ${res.status}: ${text}`);
+  }
+
+  return res;
+}
 
 export default function App() {
   const [mode, setMode] = useState("full");
@@ -31,9 +52,9 @@ export default function App() {
   const addProgress = (msg) =>
     setProgress((p) => [...p, { msg, time: new Date().toLocaleTimeString() }]);
 
-  // -----------------------------------------------------
-  // Upload File Helper (now includes API-KEY)
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     Upload File (patched)
+  ------------------------------------------------------- */
   const uploadFile = async (file, type) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -43,27 +64,18 @@ export default function App() {
     if (type === "audio") endpoint = "/upload-audio";
     if (type === "text") endpoint = "/upload-text";
 
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+    const res = await secureFetch(`${API_BASE}${endpoint}`, {
       method: "POST",
-      headers: {
-        "x-api-key": API_KEY,
-      },
       body: fd,
     });
-
-    if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`${endpoint} failed: ${res.status} ${t}`);
-    }
 
     return res.json();
   };
 
-  // -----------------------------------------------------
   const openServerFile = (filePath) => {
     if (filePath) {
       window.open(
-        `${API_BASE}/files/${encodeURIComponent(filePath)}`,
+        `${API_BASE}/files/${encodeURIComponent(filePath)}?x-api-key=${API_KEY}`,
         "_blank"
       );
     }
@@ -79,9 +91,9 @@ export default function App() {
     URL.revokeObjectURL(u);
   };
 
-  // -----------------------------------------------------
-  // VIDEO PIPELINE
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     VIDEO PIPELINE
+  ------------------------------------------------------- */
   const handleVideoFile = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -92,16 +104,11 @@ export default function App() {
       const up = await uploadFile(file, "video");
 
       addProgress("Extracting audio...");
-      const r = await fetch(`${API_BASE}/extract-audio`, {
+      const r = await secureFetch(`${API_BASE}/extract-audio`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ video_file: up.filename }),
       });
-
-      if (!r.ok) throw new Error("extract-audio failed");
 
       const j = await r.json();
       await handleAudioPipeline(j.audio_file);
@@ -111,9 +118,9 @@ export default function App() {
     }
   };
 
-  // -----------------------------------------------------
-  // AUDIO PIPELINE
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     AUDIO PIPELINE
+  ------------------------------------------------------- */
   const handleAudioFile = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -132,24 +139,18 @@ export default function App() {
   const handleAudioPipeline = async (audioFilePath) => {
     try {
       addProgress("Transcribing original...");
-      const t1 = await fetch(`${API_BASE}/transcribe-native`, {
+      const t1 = await secureFetch(`${API_BASE}/transcribe-native`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: audioFilePath }),
       });
 
       const j1 = await t1.json();
 
-      addProgress("Translating to English...");
-      const t2 = await fetch(`${API_BASE}/transcribe-english`, {
+      addProgress("Transcribing English...");
+      const t2 = await secureFetch(`${API_BASE}/transcribe-english`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: audioFilePath }),
       });
 
@@ -162,9 +163,9 @@ export default function App() {
     }
   };
 
-  // -----------------------------------------------------
-  // TEXT PIPELINE
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     TEXT PIPELINE
+  ------------------------------------------------------- */
   const handleTextPipeline = async (
     textFilePath,
     nativeTrans = "",
@@ -174,24 +175,19 @@ export default function App() {
       const fd = new FormData();
       fd.append("text_file", textFilePath);
 
-      // FAST MODE
       if (mode === "fast") {
-        addProgress("Summarizing (fast mode)...");
-
-        const s1 = await fetch(`${API_BASE}/summarize-native`, {
+        addProgress("Summarizing (native)...");
+        const s1 = await secureFetch(`${API_BASE}/summarize-native`, {
           method: "POST",
-          headers: { "x-api-key": API_KEY },
           body: fd,
         });
-
         const n = await s1.json();
 
-        const s2 = await fetch(`${API_BASE}/summarize-english`, {
+        addProgress("Summarizing (English)...");
+        const s2 = await secureFetch(`${API_BASE}/summarize-english`, {
           method: "POST",
-          headers: { "x-api-key": API_KEY },
           body: fd,
         });
-
         const e = await s2.json();
 
         setResults({
@@ -205,67 +201,49 @@ export default function App() {
         return;
       }
 
-      // FULL MODE
+      /* -------- FULL MODE -------- */
       addProgress("Summarizing (native)...");
-      const s1 = await fetch(`${API_BASE}/summarize-native`, {
+      const s1 = await secureFetch(`${API_BASE}/summarize-native`, {
         method: "POST",
-        headers: { "x-api-key": API_KEY },
         body: fd,
       });
       const sn = await s1.json();
 
       addProgress("Summarizing (English)...");
-      const s2 = await fetch(`${API_BASE}/summarize-english`, {
+      const s2 = await secureFetch(`${API_BASE}/summarize-english`, {
         method: "POST",
-        headers: { "x-api-key": API_KEY },
         body: fd,
       });
       const se = await s2.json();
 
       addProgress("Generating audio...");
-      const a1 = await fetch(`${API_BASE}/tts-native`, {
+      const a1 = await secureFetch(`${API_BASE}/tts-native`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ summary_file: sn.summary_file }),
       });
-
       const an = await a1.json();
 
-      const a2 = await fetch(`${API_BASE}/tts-english`, {
+      const a2 = await secureFetch(`${API_BASE}/tts-english`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ summary_file: se.summary_file }),
       });
-
       const ae = await a2.json();
 
       addProgress("Creating fast audio...");
-      const f1 = await fetch(`${API_BASE}/fast-native`, {
+      const f1 = await secureFetch(`${API_BASE}/fast-native`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: an.audio_file }),
       });
-
       const fn = await f1.json();
 
-      const f2 = await fetch(`${API_BASE}/fast-english`, {
+      const f2 = await secureFetch(`${API_BASE}/fast-english`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: ae.audio_file }),
       });
-
       const fe = await f2.json();
 
       setResults({
@@ -286,9 +264,9 @@ export default function App() {
     }
   };
 
-  // -----------------------------------------------------
-  // TEXT INPUT / FILE
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     TEXT INPUT
+  ------------------------------------------------------- */
   const handleTextSubmit = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -310,13 +288,11 @@ export default function App() {
         }
 
         addProgress("Sending text...");
-
         const fd = new FormData();
         fd.append("text", cleaned);
 
-        const r = await fetch(`${API_BASE}/upload-text`, {
+        const r = await secureFetch(`${API_BASE}/upload-text`, {
           method: "POST",
-          headers: { "x-api-key": API_KEY },
           body: fd,
         });
 
@@ -324,16 +300,16 @@ export default function App() {
         textFilePath = j.text_file;
       }
 
-      await handleTextPipeline(textFilePath, "", "");
+      await handleTextPipeline(textFilePath);
     } catch (e) {
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  // -----------------------------------------------------
-  // YOUTUBE
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     YOUTUBE
+  ------------------------------------------------------- */
   const handleYouTube = async () => {
     if (!youtubeUrl.trim()) {
       addProgress("Enter a YouTube URL.");
@@ -346,27 +322,23 @@ export default function App() {
 
     try {
       addProgress("Fetching subtitles...");
-      const r = await fetch(`${API_BASE}/youtube-subtitles`, {
+      const r = await secureFetch(`${API_BASE}/youtube-subtitles`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: youtubeUrl }),
       });
 
       const j = await r.json();
-
-      await handleTextPipeline(j.text_file, "", "");
+      await handleTextPipeline(j.text_file);
     } catch (e) {
       addProgress("YouTube Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  // -----------------------------------------------------
-  // Drag & Drop
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     DRAG & DROP
+  ------------------------------------------------------- */
   const onDropFile = (e, type) => {
     e.preventDefault();
     const f = e.dataTransfer.files?.[0];
@@ -379,12 +351,14 @@ export default function App() {
 
   const prevent = (e) => e.preventDefault();
 
-  // -----------------------------------------------------
-  // UI COMPONENTS
-  // -----------------------------------------------------
+  /* -------------------------------------------------------
+     UI RENDER
+  ------------------------------------------------------- */
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-white py-6">
       <div className="max-w-2xl mx-auto px-4">
+
         {/* HEADER */}
         <header className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -421,7 +395,6 @@ export default function App() {
 
         {/* MAIN CARD */}
         <div className="bg-white rounded-xl shadow p-5">
-          {/* Mode selector */}
           <h2 className="text-md font-medium mb-2">Processing Mode</h2>
 
           <div className="flex gap-2 mb-4">
@@ -448,7 +421,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* Input type */}
+          {/* INPUT TYPE */}
           <h2 className="text-lg font-semibold mb-3">Choose Input</h2>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
@@ -459,91 +432,83 @@ export default function App() {
           </div>
 
           {/* PANELS */}
-          <div className="space-y-4">
-            {/* If no type selected */}
-            {!inputType && (
-              <div className="p-6 border rounded text-center text-gray-500">
-                Choose an input type to begin.
-              </div>
-            )}
 
-            {/* VIDEO PANEL */}
-            {inputType === "video" && (
-              <DropPanel
-                label="Upload or drop a video"
-                accept="video/mp4"
-                onChange={(e) => e.target.files?.[0] && handleVideoFile(e.target.files[0])}
-                onDrop={(e) => onDropFile(e, "video")}
-                refObj={videoRef}
-                note="Audio will be extracted automatically."
-              />
-            )}
+          {!inputType && (
+            <div className="p-6 border rounded text-center text-gray-500">
+              Choose an input type to begin.
+            </div>
+          )}
 
-            {/* AUDIO PANEL */}
-            {inputType === "audio" && (
-              <DropPanel
-                label="Upload or drop audio"
-                accept="audio/*"
-                onChange={(e) => e.target.files?.[0] && handleAudioFile(e.target.files[0])}
-                onDrop={(e) => onDropFile(e, "audio")}
-                refObj={audioRef}
-                note="MP3/WAV supported."
-              />
-            )}
+          {inputType === "video" && (
+            <DropPanel
+              label="Upload or drop a video"
+              accept="video/mp4"
+              onChange={(e) => e.target.files?.[0] && handleVideoFile(e.target.files[0])}
+              onDrop={(e) => onDropFile(e, "video")}
+              refObj={videoRef}
+              note="Audio will be extracted automatically."
+            />
+          )}
 
-            {/* TEXT PANEL */}
-            {inputType === "text" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Paste text */}
-                <div className="p-3 border rounded">
-                  <label className="text-sm font-medium block mb-2">Paste text</label>
-                  <textarea
-                    rows="6"
-                    value={textInput}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    className="w-full p-3 border rounded text-sm"
-                  />
+          {inputType === "audio" && (
+            <DropPanel
+              label="Upload or drop audio"
+              accept="audio/*"
+              onChange={(e) => e.target.files?.[0] && handleAudioFile(e.target.files[0])}
+              onDrop={(e) => onDropFile(e, "audio")}
+              refObj={audioRef}
+              note="MP3/WAV supported."
+            />
+          )}
 
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => handleTextSubmit(null)}
-                      className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded"
-                    >
-                      Process
-                    </button>
-
-                    <button
-                      onClick={() => setTextInput("")}
-                      className="px-3 py-2 bg-gray-100 rounded"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-
-                {/* Upload text file */}
-                <DropPanel
-                  label="Upload a text file"
-                  accept=".txt"
-                  onChange={(e) =>
-                    e.target.files?.[0] && handleTextSubmit(e.target.files[0])
-                  }
-                  onDrop={(e) => onDropFile(e, "text")}
-                  refObj={textRef}
-                  note=".txt files only."
+          {inputType === "text" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 border rounded">
+                <label className="text-sm font-medium block mb-2">Paste text</label>
+                <textarea
+                  rows="6"
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  className="w-full p-3 border rounded text-sm"
                 />
-              </div>
-            )}
 
-            {/* YOUTUBE PANEL */}
-            {inputType === "youtube" && (
-              <YouTubePanel
-                url={youtubeUrl}
-                setUrl={setYoutubeUrl}
-                handleYouTube={handleYouTube}
+                <div className="flex gap-2 mt-3">
+                  <button
+                    onClick={() => handleTextSubmit(null)}
+                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded"
+                  >
+                    Process
+                  </button>
+
+                  <button
+                    onClick={() => setTextInput("")}
+                    className="px-3 py-2 bg-gray-100 rounded"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <DropPanel
+                label="Upload a text file"
+                accept=".txt"
+                onChange={(e) =>
+                  e.target.files?.[0] && handleTextSubmit(e.target.files[0])
+                }
+                onDrop={(e) => onDropFile(e, "text")}
+                refObj={textRef}
+                note=".txt files only."
               />
-            )}
-          </div>
+            </div>
+          )}
+
+          {inputType === "youtube" && (
+            <YouTubePanel
+              url={youtubeUrl}
+              setUrl={setYoutubeUrl}
+              handleYouTube={handleYouTube}
+            />
+          )}
         </div>
 
         {/* PROCESSING LOG */}
@@ -599,25 +564,23 @@ function Tile({ label, emoji, active, onClick, sub }) {
   );
 }
 
-const DropPanel = React.forwardRef(
-  ({ label, accept, onChange, onDrop, note }, ref) => (
-    <div
-      onDrop={onDrop}
-      onDragOver={(e) => e.preventDefault()}
-      className="border-2 border-dashed rounded-lg p-4"
-    >
-      <label className="text-sm font-medium">{label}</label>
-      <input
-        ref={ref}
-        type="file"
-        accept={accept}
-        className="mt-3 block w-full border p-2 rounded bg-gray-50 cursor-pointer"
-        onChange={onChange}
-      />
-      <div className="text-xs text-gray-500 mt-2">{note}</div>
-    </div>
-  )
-);
+const DropPanel = React.forwardRef(({ label, accept, onChange, onDrop, note }, ref) => (
+  <div
+    onDrop={onDrop}
+    onDragOver={(e) => e.preventDefault()}
+    className="border-2 border-dashed rounded-lg p-4"
+  >
+    <label className="text-sm font-medium">{label}</label>
+    <input
+      ref={ref}
+      type="file"
+      accept={accept}
+      className="mt-3 block w-full border p-2 rounded bg-gray-50 cursor-pointer"
+      onChange={onChange}
+    />
+    <div className="text-xs text-gray-500 mt-2">{note}</div>
+  </div>
+));
 
 function YouTubePanel({ url, setUrl, handleYouTube }) {
   return (
@@ -697,7 +660,9 @@ function TranscriptionBlock({ title, data, filename, downloadText }) {
 }
 
 function AudioBlock({ title, file, openServerFile }) {
-  const src = file ? `${API_BASE}/files/${encodeURIComponent(file)}` : "";
+  const src = file
+    ? `${API_BASE}/files/${encodeURIComponent(file)}?x-api-key=${API_KEY}`
+    : "";
 
   return (
     <div>
@@ -737,9 +702,7 @@ function ResultsSection({
     <div className="bg-white mt-4 rounded-xl shadow p-4 space-y-4">
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-bold">
-          {mode === "full"
-            ? "Results (8 outputs)"
-            : "Results (Fast Summaries)"}
+          {mode === "full" ? "Results (8 outputs)" : "Results (Fast Summaries)"}
         </h2>
 
         <button
@@ -810,7 +773,7 @@ function ResultsSection({
         </TwoCol>
       </SectionToggle>
 
-      {/* AUDIO (full mode only) */}
+      {/* Audio (full mode only) */}
       {mode === "full" && (
         <SectionToggle
           title="Audio Outputs"
