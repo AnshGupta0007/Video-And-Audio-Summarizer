@@ -1,0 +1,11 @@
+cat > requirements.txt <<'TXT'
+fastapi
+uvicorn[standard]
+openai
+langdetect
+gTTS
+yt-dlp
+python-multipart
+pydantic
+python-dotenv
+TXT
