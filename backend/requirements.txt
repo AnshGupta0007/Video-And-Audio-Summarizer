@@ -1,4 +1,3 @@
-cat > requirements.txt <<'TXT'
 fastapi
 uvicorn[standard]
 openai
@@ -8,4 +7,5 @@ yt-dlp
 python-multipart
 pydantic
 python-dotenv
-TXT
+youtube-transcript-api
+requests
