@@ -1,12 +1,10 @@
 import React, { useState, useRef } from "react";
-import "./App.css";
-
+import './App.css'
 const API_BASE = import.meta.env.VITE_API_BASE;
-const API_KEY = import.meta.env.VITE_BACKEND_SECRET;
+const HEADER_ICON = "/mnt/data/Screenshot 2025-11-25 at 2.57.40 PM.png";
 
-// Remove invisible unicode
-const cleanText = (t = "") =>
-  (t || "").replace(/[\u200B-\u200F\uFEFF]/g, "").trim();
+// Remove invisible / zero-width characters
+const cleanText = (txt = "") => (txt || "").replace(/[\u200B-\u200F\uFEFF]/g, "").trim();
 
 export default function App() {
   const [mode, setMode] = useState("full");
@@ -30,9 +28,7 @@ export default function App() {
   const addProgress = (msg) =>
     setProgress((p) => [...p, { msg, time: new Date().toLocaleTimeString() }]);
 
-  /* --------------------------------------------------------------------------
-     UPLOAD
-  -------------------------------------------------------------------------- */
+  // ---------------- File Upload Helper ----------------
   const uploadFile = async (file, type) => {
     const fd = new FormData();
     fd.append("file", file);
@@ -42,17 +38,14 @@ export default function App() {
     if (type === "audio") endpoint = "/upload-audio";
     if (type === "text") endpoint = "/upload-text";
 
-    const res = await fetch(`${API_BASE}${endpoint}`, {
+    const res = await fetch(${API_BASE}${endpoint}, {
       method: "POST",
-      headers: {
-        "x-api-key": API_KEY,
-      },
       body: fd,
     });
 
     if (!res.ok) {
-      const t = await res.text();
-      throw new Error(`${endpoint} failed: ${res.status} ${t}`);
+      const txt = await res.text();
+      throw new Error(${endpoint} failed: ${res.status} ${txt});
     }
 
     return res.json();
@@ -60,28 +53,21 @@ export default function App() {
 
   const openServerFile = (filePath) => {
     if (filePath) {
-      window.open(
-        `${API_BASE}/files/${encodeURIComponent(filePath)}?key=${API_KEY}`,
-        "_blank"
-      );
+      window.open(${API_BASE}/files/${encodeURIComponent(filePath)}, "_blank");
     }
   };
 
   const downloadText = (text, filename = "file.txt") => {
-    const blob = new Blob([text || ""], {
-      type: "text/plain;charset=utf-8",
-    });
-    const u = URL.createObjectURL(blob);
+    const blob = new Blob([text || ""], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = u;
+    a.href = url;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(u);
+    URL.revokeObjectURL(url);
   };
 
-  /* --------------------------------------------------------------------------
-     VIDEO → AUDIO → TEXT
-  -------------------------------------------------------------------------- */
+  // ------------------ VIDEO PIPELINE ------------------
   const handleVideoFile = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -91,27 +77,24 @@ export default function App() {
       addProgress("Uploading video...");
       const up = await uploadFile(file, "video");
 
-      addProgress("Extracting audio...");
-      const r = await fetch(`${API_BASE}/extract-audio`, {
+      addProgress("Extracting audio from video...");
+      const extractRes = await fetch(${API_BASE}/extract-audio, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ video_file: up.filename }),
       });
 
-      const j = await r.json();
-      await handleAudioPipeline(j.audio_file);
+      if (!extractRes.ok) throw new Error("Audio extraction failed");
+      const extractData = await extractRes.json();
+      await handleAudioPipeline(extractData.audio_file);
     } catch (e) {
+      console.error(e);
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  /* --------------------------------------------------------------------------
-     AUDIO → TRANSCRIPTIONS
-  -------------------------------------------------------------------------- */
+  // ------------------ AUDIO PIPELINE ------------------
   const handleAudioFile = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -122,6 +105,7 @@ export default function App() {
       const up = await uploadFile(file, "audio");
       await handleAudioPipeline(up.filename);
     } catch (e) {
+      console.error(e);
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
@@ -129,155 +113,127 @@ export default function App() {
 
   const handleAudioPipeline = async (audioFilePath) => {
     try {
-      addProgress("Transcribing (native)...");
-      const t1 = await fetch(`${API_BASE}/transcribe-native`, {
+      addProgress("Transcribing (original)...");
+      const t1 = await fetch(${API_BASE}/transcribe-native, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: audioFilePath }),
       });
-      const j1 = await t1.json();
+      if (!t1.ok) throw new Error("Transcription failed (native)");
+      const transNative = await t1.json();
 
       addProgress("Transcribing (English)...");
-      const t2 = await fetch(`${API_BASE}/transcribe-english`, {
+      const t2 = await fetch(${API_BASE}/transcribe-english, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio_file: audioFilePath }),
       });
-      const j2 = await t2.json();
+      if (!t2.ok) throw new Error("Transcription failed (English)");
+      const transEnglish = await t2.json();
 
-      await handleTextPipeline(j1.text_file, j1.transcription, j2.transcription);
+      await handleTextPipeline(transNative.text_file, transNative.transcription, transEnglish.transcription);
     } catch (e) {
+      console.error(e);
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  /* --------------------------------------------------------------------------
-     TEXT → SUMMARY → AUDIO
-  -------------------------------------------------------------------------- */
-  const handleTextPipeline = async (
-    textFilePath,
-    nativeTrans = "",
-    englishTrans = ""
-  ) => {
+  // ------------------ TEXT PIPELINE ------------------
+  const handleTextPipeline = async (textFilePath, nativeTrans = "", englishTrans = "") => {
     try {
       const fd = new FormData();
       fd.append("text_file", textFilePath);
 
-      /* FAST MODE */
+      // FAST MODE: quick summaries only
       if (mode === "fast") {
-        addProgress("Summarizing quickly...");
-        const s1 = await fetch(`${API_BASE}/summarize-native`, {
-          method: "POST",
-          headers: { "x-api-key": API_KEY },
-          body: fd,
-        });
-        const n = await s1.json();
+        addProgress("Creating quick summaries...");
 
-        const s2 = await fetch(`${API_BASE}/summarize-english`, {
-          method: "POST",
-          headers: { "x-api-key": API_KEY },
-          body: fd,
-        });
-        const e = await s2.json();
+        const s1 = await fetch(${API_BASE}/summarize-native, { method: "POST", body: fd });
+        const sumNative = await s1.json();
+
+        const s2 = await fetch(${API_BASE}/summarize-english, { method: "POST", body: fd });
+        const sumEnglish = await s2.json();
+
+        addProgress("Done!");
 
         setResults({
           transcriptionNative: nativeTrans,
           transcriptionEnglish: englishTrans,
-          summaryNative: n.summary,
-          summaryEnglish: e.summary,
+          summaryNative: sumNative.summary,
+          summaryEnglish: sumEnglish.summary,
+          audioNative: "",
+          audioEnglish: "",
+          fastAudioNative: "",
+          fastAudioEnglish: "",
         });
 
         setProcessing(false);
         return;
       }
 
-      /* FULL MODE */
-      addProgress("Summarizing (native)...");
-      const s1 = await fetch(`${API_BASE}/summarize-native`, {
-        method: "POST",
-        headers: { "x-api-key": API_KEY },
-        body: fd,
-      });
-      const sn = await s1.json();
+      // FULL MODE
+      addProgress("Summarizing (original language)...");
+      const s1 = await fetch(${API_BASE}/summarize-native, { method: "POST", body: fd });
+      const sumNative = await s1.json();
 
       addProgress("Summarizing (English)...");
-      const s2 = await fetch(`${API_BASE}/summarize-english`, {
-        method: "POST",
-        headers: { "x-api-key": API_KEY },
-        body: fd,
-      });
-      const se = await s2.json();
+      const s2 = await fetch(${API_BASE}/summarize-english, { method: "POST", body: fd });
+      const sumEnglish = await s2.json();
 
-      addProgress("Generating audio...");
-      const a1 = await fetch(`${API_BASE}/tts-native`, {
+      addProgress("Creating audio (original language)...");
+      const a1 = await fetch(${API_BASE}/tts-native, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
-        body: JSON.stringify({ summary_file: sn.summary_file }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary_file: sumNative.summary_file }),
       });
-      const an = await a1.json();
+      const audioNative = await a1.json();
 
-      const a2 = await fetch(`${API_BASE}/tts-english`, {
+      addProgress("Creating audio (English)...");
+      const a2 = await fetch(${API_BASE}/tts-english, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
-        body: JSON.stringify({ summary_file: se.summary_file }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary_file: sumEnglish.summary_file }),
       });
-      const ae = await a2.json();
+      const audioEnglish = await a2.json();
 
-      addProgress("Speeding audio...");
-      const f1 = await fetch(`${API_BASE}/fast-native`, {
+      addProgress("Speeding up audio...");
+      const f1 = await fetch(${API_BASE}/fast-native, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
-        body: JSON.stringify({ audio_file: an.audio_file }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_file: audioNative.audio_file }),
       });
-      const fn = await f1.json();
+      const fastNative = await f1.json();
 
-      const f2 = await fetch(`${API_BASE}/fast-english`, {
+      const f2 = await fetch(${API_BASE}/fast-english, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
-        body: JSON.stringify({ audio_file: ae.audio_file }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_file: audioEnglish.audio_file }),
       });
-      const fe = await f2.json();
+      const fastEnglish = await f2.json();
+
+      addProgress("All done!");
 
       setResults({
         transcriptionNative: nativeTrans,
         transcriptionEnglish: englishTrans,
-        summaryNative: sn.summary,
-        summaryEnglish: se.summary,
-        audioNative: an.audio_file,
-        audioEnglish: ae.audio_file,
-        fastAudioNative: fn.fast_audio_file,
-        fastAudioEnglish: fe.fast_audio_file,
+        summaryNative: sumNative.summary,
+        summaryEnglish: sumEnglish.summary,
+        audioNative: audioNative.audio_file,
+        audioEnglish: audioEnglish.audio_file,
+        fastAudioNative: fastNative.fast_audio_file,
+        fastAudioEnglish: fastEnglish.fast_audio_file,
       });
 
       setProcessing(false);
     } catch (e) {
+      console.error(e);
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  /* --------------------------------------------------------------------------
-     TEXT INPUT
-  -------------------------------------------------------------------------- */
+  // ---------------- Text Input Handler ----------------
   const handleTextSubmit = async (file) => {
     setProgress([]);
     setProcessing(true);
@@ -286,6 +242,7 @@ export default function App() {
     try {
       let textFilePath;
 
+      // File upload
       if (file) {
         addProgress("Uploading text file...");
         const up = await uploadFile(file, "text");
@@ -293,7 +250,7 @@ export default function App() {
       } else {
         const cleaned = cleanText(textInput);
         if (!cleaned) {
-          addProgress("Enter text first.");
+          addProgress("Please enter some text first.");
           setProcessing(false);
           return;
         }
@@ -302,29 +259,28 @@ export default function App() {
         const fd = new FormData();
         fd.append("text", cleaned);
 
-        const r = await fetch(`${API_BASE}/upload-text`, {
+        const res = await fetch(${API_BASE}/upload-text, {
           method: "POST",
-          headers: { "x-api-key": API_KEY },
           body: fd,
         });
 
-        const j = await r.json();
+        const j = await res.json();
         textFilePath = j.text_file;
       }
 
       await handleTextPipeline(textFilePath, "", "");
     } catch (e) {
+      console.error(e);
       addProgress("Error: " + e.message);
       setProcessing(false);
     }
   };
 
-  /* --------------------------------------------------------------------------
-     YOUTUBE
-  -------------------------------------------------------------------------- */
+  // ---------------- YouTube Handler ----------------
   const handleYouTube = async () => {
-    if (!youtubeUrl.trim()) {
-      addProgress("Enter YouTube URL.");
+    const url = youtubeUrl.trim();
+    if (!url) {
+      addProgress("Please enter a YouTube link.");
       return;
     }
 
@@ -334,239 +290,297 @@ export default function App() {
 
     try {
       addProgress("Fetching subtitles...");
-      const r = await fetch(`${API_BASE}/youtube-subtitles`, {
+      const res = await fetch(${API_BASE}/youtube-subtitles, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-        },
-        body: JSON.stringify({ url: youtubeUrl }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
       });
 
-      const j = await r.json();
+      if (!res.ok) throw new Error("Unable to fetch subtitles");
+      const j = await res.json();
 
+      addProgress("Processing subtitles...");
       await handleTextPipeline(j.text_file, "", "");
     } catch (e) {
+      console.error(e);
       addProgress("YouTube Error: " + e.message);
       setProcessing(false);
     }
   };
 
+  // ---------------- Drag & Drop ----------------
   const onDropFile = (e, type) => {
     e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (!f) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
 
-    if (type === "video") handleVideoFile(f);
-    if (type === "audio") handleAudioFile(f);
-    if (type === "text") handleTextSubmit(f);
+    if (type === "video") handleVideoFile(file);
+    if (type === "audio") handleAudioFile(file);
+    if (type === "text") handleTextSubmit(file);
   };
 
   const prevent = (e) => e.preventDefault();
 
-  /* --------------------------------------------------------------------------
-     UI COMPONENTS BELOW…
-  -------------------------------------------------------------------------- */
+  // ---------------- UI Helpers for Tailwind v4 safety ----------------
+  const modeButtonBase = "flex-1 px-3 py-2 rounded-lg text-sm font-medium";
+  const modeFullActive = "bg-indigo-600 text-white";
+  const modeFullInactive = "bg-white border border-gray-200";
+  const modeFastActive = "bg-green-600 text-white";
+  const modeFastInactive = "bg-white border border-gray-200";
 
+  // ---------------- UI ----------------
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-white py-6">
       <div className="max-w-2xl mx-auto px-4">
-        {/* HEADER */}
+        {/* Header */}
         <header className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-indigo-700">
-            Video & Audio Summarizer
-          </h1>
+          <div className="flex items-center gap-3">
+            <img
+              src={HEADER_ICON}
+              alt="icon"
+              className="w-10 h-10 rounded border"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
 
-          <button
-            onClick={() => {
-              setInputType(null);
-              setTextInput("");
-              setYoutubeUrl("");
-              setResults(null);
-              setProgress([]);
-              setProcessing(false);
-            }}
-            className="px-3 py-2 bg-white border rounded shadow-sm text-sm"
-          >
-            Reset
-          </button>
+            <div>
+              <h1 className="text-2xl font-extrabold text-indigo-700">Video and Audio Summarizer</h1>
+              <p className="text-xs text-gray-600">Upload media or paste text / YouTube link</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setInputType(null);
+                setTextInput("");
+                setYoutubeUrl("");
+                setResults(null);
+                setProgress([]);
+                setProcessing(false);
+              }}
+              className="px-3 py-2 bg-white border rounded shadow-sm text-sm"
+            >
+              Reset
+            </button>
+          </div>
         </header>
 
-        {/* CARD */}
-        <div className="bg-white rounded-xl shadow p-5">
+        {/* Card */}
+        <div className="bg-white rounded-2xl shadow-lg p-5">
           {/* Mode selector */}
-          <h2 className="text-md font-medium mb-2">Processing Mode</h2>
+          <div className="mb-4">
+            <h2 className="text-md font-medium mb-2">Processing Mode</h2>
 
-          <div className="flex gap-2 mb-4">
-            <button
-              onClick={() => setMode("full")}
-              className={`flex-1 px-3 py-2 rounded text-sm font-medium ${
-                mode === "full"
-                  ? "bg-indigo-600 text-white"
-                  : "bg-white border border-gray-300"
-              }`}
-            >
-              Full (8 outputs)
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMode("full")}
+                className={${modeButtonBase} ${mode === "full" ? modeFullActive : modeFullInactive}}
+              >
+                Full Mode — 8 outputs
+              </button>
 
-            <button
-              onClick={() => setMode("fast")}
-              className={`flex-1 px-3 py-2 rounded text-sm font-medium ${
-                mode === "fast"
-                  ? "bg-green-600 text-white"
-                  : "bg-white border border-gray-300"
-              }`}
-            >
-              Fast (summary only)
-            </button>
+              <button
+                onClick={() => setMode("fast")}
+                className={${modeButtonBase} ${mode === "fast" ? modeFastActive : modeFastInactive}}
+              >
+                Fast Mode — quick summary
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-2">
+              {mode === "full" ? "Creates audio, fast audio, and summaries." : "Quick summaries only. No audio."}
+            </p>
           </div>
 
-          {/* Input type */}
-          <h2 className="text-lg font-semibold mb-3">Choose Input</h2>
+          {/* Input type buttons */}
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold mb-3">Choose input</h2>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-            <Tile label="Video" emoji="🎥" active={inputType === "video"} onClick={() => setInputType("video")} sub="MP4" />
-            <Tile label="Audio" emoji="🎵" active={inputType === "audio"} onClick={() => setInputType("audio")} sub="MP3/WAV" />
-            <Tile label="Text" emoji="📝" active={inputType === "text"} onClick={() => setInputType("text")} sub="Paste/TXT" />
-            <Tile label="YouTube" emoji="▶️" active={inputType === "youtube"} onClick={() => setInputType("youtube")} sub="Captions" />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <InputTile label="Video" emoji="🎥" active={inputType === "video"} onClick={() => setInputType("video")} sub="MP4" />
+              <InputTile label="Audio" emoji="🎵" active={inputType === "audio"} onClick={() => setInputType("audio")} sub="MP3/WAV" />
+              <InputTile label="Text" emoji="📝" active={inputType === "text"} onClick={() => setInputType("text")} sub="Paste or TXT" />
+              <InputTile label="YouTube" emoji="▶️" active={inputType === "youtube"} onClick={() => setInputType("youtube")} sub="Captions" />
+            </div>
           </div>
 
-          {/* PANELS */}
+          {/* Input Panels */}
           <div className="space-y-4">
-            {!inputType && (
-              <div className="p-6 border rounded text-center text-gray-500">
-                Choose an input type to begin.
+            {!inputType && <div className="text-center text-gray-500 p-6 border rounded">Choose a type to start</div>}
+
+            {/* Video */}
+            {inputType === "video" && (
+              <div onDrop={(e) => onDropFile(e, "video")} onDragOver={prevent} className="border-2 border-dashed rounded-lg p-4">
+                <label className="text-sm font-medium">Upload or drop a video</label>
+
+                {/* CLEAR FILE INPUT */}
+                <input
+                  ref={videoRef}
+                  type="file"
+                  accept="video/mp4"
+                  className="mt-3 block w-full border p-2 rounded cursor-pointer bg-gray-50 hover:bg-gray-100"
+                  onChange={(e) => e.target.files?.[0] && handleVideoFile(e.target.files[0])}
+                />
+
+                <div className="text-xs text-gray-500 mt-2">Audio will be extracted automatically.</div>
               </div>
             )}
 
-            {inputType === "video" && (
-              <DropPanel
-                label="Upload or drop a video"
-                accept="video/mp4"
-                onChange={(e) =>
-                  e.target.files?.[0] && handleVideoFile(e.target.files[0])
-                }
-                onDrop={(e) => onDropFile(e, "video")}
-                refObj={videoRef}
-                note="Audio extracted automatically."
-              />
-            )}
-
+            {/* Audio */}
             {inputType === "audio" && (
-              <DropPanel
-                label="Upload or drop audio"
-                accept="audio/*"
-                onChange={(e) =>
-                  e.target.files?.[0] && handleAudioFile(e.target.files[0])
-                }
-                onDrop={(e) => onDropFile(e, "audio")}
-                refObj={audioRef}
-                note="MP3/WAV supported."
-              />
+              <div onDrop={(e) => onDropFile(e, "audio")} onDragOver={prevent} className="border-2 border-dashed rounded-lg p-4">
+                <label className="text-sm font-medium">Upload or drop audio</label>
+
+                <input
+                  ref={audioRef}
+                  type="file"
+                  accept="audio/*"
+                  className="mt-3 block w-full border p-2 rounded cursor-pointer bg-gray-50 hover:bg-gray-100"
+                  onChange={(e) => e.target.files?.[0] && handleAudioFile(e.target.files[0])}
+                />
+
+                <div className="text-xs text-gray-500 mt-2">MP3 or WAV files work.</div>
+              </div>
             )}
 
+            {/* Text */}
             {inputType === "text" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="p-3 border rounded">
-                  <label className="text-sm font-medium block mb-2">
-                    Paste text
-                  </label>
+                  <label className="text-sm font-medium block mb-2">Paste text</label>
 
-                  <textarea
-                    rows="6"
-                    value={textInput}
-                    onChange={(e) => setTextInput(e.target.value)}
-                    className="w-full p-3 border rounded text-sm"
-                  />
+                  <textarea rows="6" value={textInput} onChange={(e) => setTextInput(e.target.value)} className="w-full p-3 border rounded text-sm" placeholder="Paste your text here..." />
 
                   <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => handleTextSubmit(null)}
-                      className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded"
-                    >
-                      Process
+                    <button onClick={() => handleTextSubmit(null)} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded">
+                      Process text
                     </button>
 
-                    <button
-                      onClick={() => setTextInput("")}
-                      className="px-3 py-2 bg-gray-100 rounded"
-                    >
+                    <button onClick={() => setTextInput("")} className="px-3 py-2 bg-gray-100 rounded">
                       Clear
                     </button>
                   </div>
                 </div>
 
-                <DropPanel
-                  label="Upload text file"
-                  accept=".txt"
-                  onChange={(e) =>
-                    e.target.files?.[0] && handleTextSubmit(e.target.files[0])
-                  }
-                  onDrop={(e) => onDropFile(e, "text")}
-                  refObj={textRef}
-                  note=".txt files only."
-                />
+                <div onDrop={(e) => onDropFile(e, "text")} onDragOver={prevent} className="p-3 border rounded">
+                  <label className="text-sm font-medium">Upload a text file</label>
+
+                  <input
+                    ref={textRef}
+                    type="file"
+                    accept=".txt"
+                    className="mt-3 block w-full border p-2 rounded cursor-pointer bg-gray-50 hover:bg-gray-100"
+                    onChange={(e) => e.target.files?.[0] && handleTextSubmit(e.target.files[0])}
+                  />
+
+                  <div className="text-xs text-gray-500 mt-2">Upload a .txt file to summarize it.</div>
+                </div>
               </div>
             )}
 
+            {/* YouTube */}
             {inputType === "youtube" && (
-              <YouTubePanel
-                url={youtubeUrl}
-                setUrl={setYoutubeUrl}
-                handleYouTube={handleYouTube}
-              />
+              <div className="p-3 border rounded">
+                <label className="text-sm font-medium block mb-2">YouTube link</label>
+
+                <input type="text" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} placeholder="https://youtube.com/watch?v=..." className="w-full p-3 border rounded text-sm" />
+
+                <div className="flex gap-2 mt-3">
+                  <button onClick={handleYouTube} className="px-4 py-2 bg-indigo-600 text-white rounded">
+                    Get subtitles & summarize
+                  </button>
+
+                  <button onClick={() => setYoutubeUrl("")} className="px-3 py-2 bg-gray-100 rounded">
+                    Clear
+                  </button>
+                </div>
+
+                <p className="text-xs text-gray-500 mt-2">Works with normal, short, and youtu.be links.</p>
+              </div>
             )}
           </div>
         </div>
 
-        {/* PROCESS LOG */}
+        {/* Progress Log */}
         {processing && (
           <div className="bg-white mt-4 rounded-xl shadow p-3">
-            <h3 className="font-semibold text-sm mb-2">Processing…</h3>
+            <h3 className="font-semibold text-sm mb-2">Processing...</h3>
             <div className="max-h-36 overflow-auto text-sm space-y-1">
               {progress.map((p, i) => (
                 <div key={i}>
-                  • {p.msg}{" "}
-                  <span className="text-xs text-gray-400 ml-2">{p.time}</span>
+                  • {p.msg} <span className="ml-2 text-gray-400 text-xs">{p.time}</span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* RESULTS */}
+        {/* Results */}
         {results && (
-          <ResultsSection
-            mode={mode}
-            results={results}
-            collapsed={collapsed}
-            setCollapsed={setCollapsed}
-            downloadText={downloadText}
-            openServerFile={openServerFile}
-            setResults={setResults}
-            setInputType={setInputType}
-            setProgress={setProgress}
-          />
+          <div className="bg-white mt-4 rounded-xl shadow p-4 space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-bold">{mode === "full" ? "Results (8 outputs)" : "Results (Fast Summary)"}</h2>
+              <button
+                onClick={() => {
+                  setResults(null);
+                  setProgress([]);
+                  setInputType(null);
+                }}
+                className="px-3 py-2 bg-gray-100 rounded text-sm"
+              >
+                New job
+              </button>
+            </div>
+
+            {/* Transcriptions */}
+            <SectionToggle
+              title="Transcriptions"
+              collapsed={collapsed.transcriptions}
+              onClick={() => setCollapsed({ ...collapsed, transcriptions: !collapsed.transcriptions })}
+            >
+              <TwoCol>
+                <TranscriptionBlock title="Original" data={results.transcriptionNative} filename="transcription_native.txt" downloadText={downloadText} />
+                <TranscriptionBlock title="English" data={results.transcriptionEnglish} filename="transcription_english.txt" downloadText={downloadText} />
+              </TwoCol>
+            </SectionToggle>
+
+            {/* Summaries */}
+            <SectionToggle title="Summaries" collapsed={collapsed.summaries} onClick={() => setCollapsed({ ...collapsed, summaries: !collapsed.summaries })}>
+              <TwoCol>
+                <TranscriptionBlock title="Original" data={results.summaryNative} filename="summary_native.txt" downloadText={downloadText} />
+                <TranscriptionBlock title="English" data={results.summaryEnglish} filename="summary_english.txt" downloadText={downloadText} />
+              </TwoCol>
+            </SectionToggle>
+
+            {/* Audio */}
+            {mode === "full" && (
+              <SectionToggle title="Audio Files" collapsed={collapsed.audio} onClick={() => setCollapsed({ ...collapsed, audio: !collapsed.audio })}>
+                <TwoCol>
+                  <AudioBlock title="Original Summary" file={results.audioNative} openServerFile={openServerFile} />
+                  <AudioBlock title="English Summary" file={results.audioEnglish} openServerFile={openServerFile} />
+                  <AudioBlock title="Fast Original (1.5x)" file={results.fastAudioNative} openServerFile={openServerFile} />
+                  <AudioBlock title="Fast English (1.5x)" file={results.fastAudioEnglish} openServerFile={openServerFile} />
+                </TwoCol>
+              </SectionToggle>
+            )}
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-/* --------------------------------------------------------------------------
-   SMALL COMPONENTS
--------------------------------------------------------------------------- */
+/* ---------------- Small UI Components ---------------- */
 
-function Tile({ label, emoji, active, onClick, sub }) {
+function InputTile({ label, emoji, active, onClick, sub }) {
+  // Build className with static pieces so Tailwind v4 extracts all utilities
+  const base = "flex flex-col items-center gap-1 p-3 rounded-lg text-sm border";
+  const activeClasses = "bg-indigo-50 border-indigo-300";
+  const inactiveClasses = "bg-white border-gray-200";
+  const cls = active ? ${base} ${activeClasses} : ${base} ${inactiveClasses};
+
   return (
-    <button
-      onClick={onClick}
-      className={`flex flex-col items-center p-3 border rounded-lg ${
-        active
-          ? "bg-indigo-50 border-indigo-300"
-          : "bg-white border-gray-200"
-      }`}
-    >
+    <button onClick={onClick} className={cls}>
       <div className="text-2xl">{emoji}</div>
       <div className="font-medium">{label}</div>
       <div className="text-xs text-gray-500">{sub}</div>
@@ -574,72 +588,12 @@ function Tile({ label, emoji, active, onClick, sub }) {
   );
 }
 
-function DropPanel({ label, accept, onChange, onDrop, note, refObj }) {
-  return (
-    <div
-      onDrop={onDrop}
-      onDragOver={(e) => e.preventDefault()}
-      className="border-2 border-dashed rounded-lg p-4"
-    >
-      <label className="text-sm font-medium">{label}</label>
-      <input
-        ref={refObj}
-        type="file"
-        accept={accept}
-        className="mt-3 block w-full border p-2 rounded bg-gray-50 cursor-pointer"
-        onChange={onChange}
-      />
-      <div className="text-xs text-gray-500 mt-2">{note}</div>
-    </div>
-  );
-}
-
-function YouTubePanel({ url, setUrl, handleYouTube }) {
-  return (
-    <div className="p-3 border rounded">
-      <label className="text-sm font-medium block mb-2">YouTube link</label>
-
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://youtube.com/watch?v=..."
-        className="w-full p-3 border rounded text-sm"
-      />
-
-      <div className="flex gap-2 mt-3">
-        <button
-          onClick={handleYouTube}
-          className="px-4 py-2 bg-indigo-600 text-white rounded"
-        >
-          Process
-        </button>
-        <button
-          onClick={() => setUrl("")}
-          className="px-3 py-2 bg-gray-100 rounded"
-        >
-          Clear
-        </button>
-      </div>
-
-      <p className="text-xs text-gray-500 mt-2">
-        Works with watch?v=, shorts, youtu.be.
-      </p>
-    </div>
-  );
-}
-
 function SectionToggle({ title, collapsed, onClick, children }) {
   return (
     <div className="border rounded">
-      <div
-        className="flex justify-between items-center p-3 cursor-pointer"
-        onClick={onClick}
-      >
+      <div className="flex justify-between items-center p-3 cursor-pointer" onClick={onClick}>
         <strong>{title}</strong>
-        <span className="text-xs text-gray-500">
-          {collapsed ? "Expand" : "Collapse"}
-        </span>
+        <span className="text-xs text-gray-500">{collapsed ? "Expand" : "Collapse"}</span>
       </div>
 
       {!collapsed && <div className="p-3">{children}</div>}
@@ -656,32 +610,25 @@ function TranscriptionBlock({ title, data, filename, downloadText }) {
     <div>
       <div className="flex justify-between items-center mb-2">
         <small className="font-medium">{title}</small>
-        <button
-          onClick={() => downloadText(data, filename)}
-          className="px-2 py-1 bg-blue-600 text-white rounded text-xs"
-        >
+        <button onClick={() => downloadText(data, filename)} className="px-2 py-1 bg-blue-600 text-white rounded text-xs">
           Download
         </button>
       </div>
 
-      <pre className="text-sm text-gray-800 whitespace-pre-wrap break-words">
-        {data || "(none)"}
-      </pre>
+      <pre className="text-sm text-gray-800 whitespace-pre-wrap break-words">{data || "(none)"}</pre>
     </div>
   );
 }
 
 function AudioBlock({ title, file, openServerFile }) {
-  const src = file ? `${API_BASE}/files/${encodeURIComponent(file)}` : "";
+  // Build source url statically so extractor sees classes/strings clearly
+  const src = file ? ${API_BASE}/files/${encodeURIComponent(file)} : "";
 
   return (
     <div>
       <div className="flex justify-between items-center mb-2">
         <small className="font-medium">{title}</small>
-        <button
-          onClick={() => openServerFile(file)}
-          className="px-2 py-1 bg-indigo-600 text-white rounded text-xs"
-        >
+        <button onClick={() => openServerFile(file)} className="px-2 py-1 bg-indigo-600 text-white rounded text-xs">
           Download
         </button>
       </div>
@@ -695,130 +642,5 @@ function AudioBlock({ title, file, openServerFile }) {
       )}
     </div>
   );
-}
 
-function ResultsSection({
-  mode,
-  results,
-  collapsed,
-  setCollapsed,
-  downloadText,
-  openServerFile,
-  setResults,
-  setInputType,
-  setProgress,
-}) {
-  return (
-    <div className="bg-white mt-4 rounded-xl shadow p-4 space-y-4">
-      <div className="flex justify-between items-center">
-        <h2 className="text-lg font-bold">
-          {mode === "full" ? "Results (8 outputs)" : "Results (Fast Summaries)"}
-        </h2>
-
-        <button
-          onClick={() => {
-            setResults(null);
-            setProgress([]);
-            setInputType(null);
-          }}
-          className="px-3 py-2 bg-gray-100 rounded text-sm"
-        >
-          New Job
-        </button>
-      </div>
-
-      {/* TRANSCRIPTIONS */}
-      <SectionToggle
-        title="Transcriptions"
-        collapsed={collapsed.transcriptions}
-        onClick={() =>
-          setCollapsed({
-            ...collapsed,
-            transcriptions: !collapsed.transcriptions,
-          })
-        }
-      >
-        <TwoCol>
-          <TranscriptionBlock
-            title="Original"
-            data={results.transcriptionNative}
-            filename="transcription_native.txt"
-            downloadText={downloadText}
-          />
-
-          <TranscriptionBlock
-            title="English"
-            data={results.transcriptionEnglish}
-            filename="transcription_english.txt"
-            downloadText={downloadText}
-          />
-        </TwoCol>
-      </SectionToggle>
-
-      {/* SUMMARIES */}
-      <SectionToggle
-        title="Summaries"
-        collapsed={collapsed.summaries}
-        onClick={() =>
-          setCollapsed({
-            ...collapsed,
-            summaries: !collapsed.summaries,
-          })
-        }
-      >
-        <TwoCol>
-          <TranscriptionBlock
-            title="Original"
-            data={results.summaryNative}
-            filename="summary_native.txt"
-            downloadText={downloadText}
-          />
-
-          <TranscriptionBlock
-            title="English"
-            data={results.summaryEnglish}
-            filename="summary_english.txt"
-            downloadText={downloadText}
-          />
-        </TwoCol>
-      </SectionToggle>
-
-      {/* AUDIO OUTPUTS (Full Mode Only) */}
-      {mode === "full" && (
-        <SectionToggle
-          title="Audio Outputs"
-          collapsed={collapsed.audio}
-          onClick={() =>
-            setCollapsed({ ...collapsed, audio: !collapsed.audio })
-          }
-        >
-          <TwoCol>
-            <AudioBlock
-              title="Original Summary"
-              file={results.audioNative}
-              openServerFile={openServerFile}
-            />
-
-            <AudioBlock
-              title="English Summary"
-              file={results.audioEnglish}
-              openServerFile={openServerFile}
-            />
-
-            <AudioBlock
-              title="Fast Original (1.5x)"
-              file={results.fastAudioNative}
-              openServerFile={openServerFile}
-            />
-
-            <AudioBlock
-              title="Fast English (1.5x)"
-              file={results.fastAudioEnglish}
-              openServerFile={openServerFile}
-            />
-          </TwoCol>
-        </SectionToggle>
-      )}
-    </div>
-  );
-}
+              }
