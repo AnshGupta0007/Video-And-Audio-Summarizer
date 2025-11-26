@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import './App.css'
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE;
 const HEADER_ICON = "/mnt/data/Screenshot 2025-11-25 at 2.57.40 PM.png";
 
 // Remove invisible / zero-width characters
