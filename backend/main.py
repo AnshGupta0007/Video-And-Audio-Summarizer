@@ -2,8 +2,9 @@ import os
 import re
 import shutil
 import subprocess
-import logging
 import uuid
+import logging
+
 from typing import Optional
 
 from fastapi import (
@@ -14,6 +15,7 @@ from fastapi import (
     Form,
     Header,
     Depends,
+    Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -25,20 +27,22 @@ from gtts import gTTS
 import yt_dlp
 
 
-# ---------------------------------------------------------
+# -----------------------------------
 # Logging
-# ---------------------------------------------------------
+# -----------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("media-processor")
 
-# ---------------------------------------------------------
-# FastAPI app
-# ---------------------------------------------------------
-app = FastAPI(title="Media Processor API — Protected Edition")
 
-# ---------------------------------------------------------
-# CORS (ONLY allow your frontend)
-# ---------------------------------------------------------
+# -----------------------------------
+# FastAPI App
+# -----------------------------------
+app = FastAPI(title="Media Processor API (Protected v5)")
+
+
+# -----------------------------------
+# CORS
+# -----------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -51,37 +55,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# SECURITY: API KEY protection
-# ---------------------------------------------------------
+
+# -----------------------------------
+# Security — API Key Protection
+# -----------------------------------
 API_SECRET = os.getenv("API_SECRET")
 
-def verify_key(x_api_key: str = Header(None)):
+def verify_key(request: Request, x_api_key: str = Header(None)):
     """
-    Simple and effective API-key protection.
-    Every request must include the header x-api-key.
+    Allow CORS preflight (OPTIONS) without API key.
+    Require API key for all other methods.
     """
+    if request.method == "OPTIONS":
+        return True  # allow browser preflight
+
     if API_SECRET is None:
-        raise HTTPException(500, "Server misconfigured: API_SECRET missing")
+        raise HTTPException(500, "Server missing API_SECRET")
 
     if x_api_key != API_SECRET:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
     return True
 
 
-# ---------------------------------------------------------
+# Universal handler for OPTIONS requests (fixes preflight errors)
+@app.options("/{path:path}")
+async def preflight_handler(path: str):
+    return {"status": "ok"}
+
+
+# -----------------------------------
 # OpenAI Client
-# ---------------------------------------------------------
+# -----------------------------------
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
 
-# ---------------------------------------------------------
-# Pydantic Models
-# ---------------------------------------------------------
+
+# -----------------------------------
+# DTOs
+# -----------------------------------
 class VideoFile(BaseModel):
     video_file: str
 
@@ -97,9 +112,10 @@ class YouTubeURL(BaseModel):
 class SummaryFile(BaseModel):
     summary_file: str
 
-# ---------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------
+
+# -----------------------------------
+# Helper Functions
+# -----------------------------------
 def run_ffmpeg(cmd):
     subprocess.run(cmd, check=True)
 
@@ -129,6 +145,7 @@ def extract_video_id(url):
         m = re.search(p, url)
         if m:
             return m.group(1)
+
     last = url.rstrip("/").split("/")[-1]
     return last if len(last) >= 6 else None
 
@@ -161,7 +178,7 @@ def extract_youtube(url: str, textFile: str):
         if os.path.exists(expected + ".mp3"):
             expected = expected + ".mp3"
         else:
-            raise HTTPException(500, "Audio missing after download")
+            raise HTTPException(500, "Audio missing")
 
     transcript = call_whisper(expected)
 
@@ -178,11 +195,7 @@ def summarize_native(path, out):
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "Summarize the user's text in the same language. "
-                    "Keep it extremely concise while preserving full context and meaning. "
-                    "Use minimal words."
-                ),
+                "content": "Summarize the user's text in the same language, extremely concise, minimal words, full context.",
             },
             {"role": "user", "content": text},
         ],
@@ -198,11 +211,7 @@ def summarize_english(path, out):
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "Summarize the user's text in English. "
-                    "Keep it extremely concise but context-complete. "
-                    "Use the fewest words possible."
-                ),
+                "content": "Summarize the user's text in English, extremely concise, minimal words, full meaning preserved.",
             },
             {"role": "user", "content": text},
         ],
@@ -227,9 +236,10 @@ def fast_audio(inp, out):
     return out
 
 
-# ---------------------------------------------------------
-# ENDPOINTS — All PROTECTED with API KEY
-# ---------------------------------------------------------
+
+# -------------------------------------------------------------------
+# ENDPOINTS (All protected with verify_key except OPTIONS)
+# -------------------------------------------------------------------
 
 @app.post("/upload-audio", dependencies=[Depends(verify_key)])
 async def upload_audio(file: UploadFile = File(...)):
@@ -238,6 +248,7 @@ async def upload_audio(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     return {"filename": p}
 
+
 @app.post("/upload-text", dependencies=[Depends(verify_key)])
 async def upload_text(file: UploadFile = File(None), text: str = Form(None)):
     if file:
@@ -245,20 +256,23 @@ async def upload_text(file: UploadFile = File(None), text: str = Form(None)):
         with open(p, "wb") as f:
             shutil.copyfileobj(file.file, f)
         return {"text_file": p}
-    elif text:
-        uid = str(uuid.uuid4())
+
+    if text:
+        uid = uuid.uuid4().hex
         p = f"uploads/pasted_{uid}.txt"
         with open(p, "w", encoding="utf-8") as f:
             f.write(text)
         return {"text_file": p}
-    else:
-        raise HTTPException(400, "No text provided")
+
+    raise HTTPException(400, "No text provided")
+
 
 @app.post("/youtube-subtitles", dependencies=[Depends(verify_key)])
 async def youtube_ep(data: YouTubeURL):
     out = "uploads/youtube.txt"
     extract_youtube(data.url, out)
     return {"text_file": out}
+
 
 @app.post("/upload-video", dependencies=[Depends(verify_key)])
 async def upload_video(file: UploadFile = File(...)):
@@ -267,61 +281,71 @@ async def upload_video(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     return {"filename": p}
 
+
 @app.post("/extract-audio", dependencies=[Depends(verify_key)])
 async def extract_audio_ep(data: VideoFile):
     out = f"outputs/audio_{os.path.basename(data.video_file)}.mp3"
     extractAudio(data.video_file, out)
     return {"audio_file": out}
 
+
 @app.post("/transcribe-native", dependencies=[Depends(verify_key)])
-async def tn(data: AudioFile):
+async def transcribe_native(data: AudioFile):
     out = f"outputs/native_{os.path.basename(data.audio_file)}.txt"
     t = call_whisper(data.audio_file)
     open(out, "w").write(t)
     return {"text_file": out, "transcription": t}
 
+
 @app.post("/transcribe-english", dependencies=[Depends(verify_key)])
-async def te(data: AudioFile):
+async def transcribe_english(data: AudioFile):
     out = f"outputs/en_{os.path.basename(data.audio_file)}.txt"
     t = call_whisper(data.audio_file, language="en")
     open(out, "w").write(t)
     return {"text_file": out, "transcription": t}
 
+
 @app.post("/summarize-native", dependencies=[Depends(verify_key)])
-async def sn(text_file: str = Form(...)):
+async def summarize_native_ep(text_file: str = Form(...)):
     out = f"outputs/sum_native_{os.path.basename(text_file)}.txt"
     s = summarize_native(text_file, out)
     return {"summary_file": out, "summary": s}
 
+
 @app.post("/summarize-english", dependencies=[Depends(verify_key)])
-async def se(text_file: str = Form(...)):
+async def summarize_english_ep(text_file: str = Form(...)):
     out = f"outputs/sum_eng_{os.path.basename(text_file)}.txt"
     s = summarize_english(text_file, out)
     return {"summary_file": out, "summary": s}
 
+
 @app.post("/tts-native", dependencies=[Depends(verify_key)])
-async def tn2(data: SummaryFile):
+async def tts_native_ep(data: SummaryFile):
     out = f"outputs/audio_native_{os.path.basename(data.summary_file)}.mp3"
     tts_native(data.summary_file, out)
     return {"audio_file": out}
 
+
 @app.post("/tts-english", dependencies=[Depends(verify_key)])
-async def te2(data: SummaryFile):
+async def tts_english_ep(data: SummaryFile):
     out = f"outputs/audio_english_{os.path.basename(data.summary_file)}.mp3"
     tts_english(data.summary_file, out)
     return {"audio_file": out}
 
+
 @app.post("/fast-native", dependencies=[Depends(verify_key)])
-async def fn(data: AudioFile):
+async def fast_native_ep(data: AudioFile):
     out = f"outputs/fast_native_{os.path.basename(data.audio_file)}.mp3"
     fast_audio(data.audio_file, out)
     return {"fast_audio_file": out}
 
+
 @app.post("/fast-english", dependencies=[Depends(verify_key)])
-async def fe(data: AudioFile):
+async def fast_english_ep(data: AudioFile):
     out = f"outputs/fast_english_{os.path.basename(data.audio_file)}.mp3"
     fast_audio(data.audio_file, out)
     return {"fast_audio_file": out}
+
 
 @app.get("/files/{path:path}", dependencies=[Depends(verify_key)])
 async def get_file(path):
@@ -329,9 +353,11 @@ async def get_file(path):
         raise HTTPException(404)
     return FileResponse(path)
 
+
 @app.get("/")
-async def root():
-    return {"status": "OK — Protected API is running"}
+async def home():
+    return {"status": "OK", "version": "v5-protected"}
+
 
 
 if __name__ == "__main__":
