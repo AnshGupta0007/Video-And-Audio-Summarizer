@@ -1,16 +1,22 @@
-
-
 import os
 import re
 import shutil
 import subprocess
 import logging
-from typing import Optional
 import uuid
+from typing import Optional
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import (
+    FastAPI,
+    File,
+    UploadFile,
+    HTTPException,
+    Form,
+    Header,
+    Depends,
+)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from openai import OpenAI
@@ -18,25 +24,64 @@ from langdetect import detect
 from gtts import gTTS
 import yt_dlp
 
+
+# ---------------------------------------------------------
+# Logging
+# ---------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("media-processor")
 
-app = FastAPI(title="Media Processor API (Fixed Edition)")
+# ---------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------
+app = FastAPI(title="Media Processor API — Protected Edition")
 
+# ---------------------------------------------------------
+# CORS (ONLY allow your frontend)
+# ---------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://video-and-audio-summarizer.vercel.app"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://video-and-audio-summarizer.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------
+# SECURITY: API KEY protection
+# ---------------------------------------------------------
+API_SECRET = os.getenv("API_SECRET")
+
+def verify_key(x_api_key: str = Header(None)):
+    """
+    Simple and effective API-key protection.
+    Every request must include the header x-api-key.
+    """
+    if API_SECRET is None:
+        raise HTTPException(500, "Server misconfigured: API_SECRET missing")
+
+    if x_api_key != API_SECRET:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return True
+
+
+# ---------------------------------------------------------
+# OpenAI Client
+# ---------------------------------------------------------
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY) if OPENAI_KEY else None
 
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
 
+# ---------------------------------------------------------
+# Pydantic Models
+# ---------------------------------------------------------
 class VideoFile(BaseModel):
     video_file: str
 
@@ -52,6 +97,9 @@ class YouTubeURL(BaseModel):
 class SummaryFile(BaseModel):
     summary_file: str
 
+# ---------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------
 def run_ffmpeg(cmd):
     subprocess.run(cmd, check=True)
 
@@ -81,7 +129,6 @@ def extract_video_id(url):
         m = re.search(p, url)
         if m:
             return m.group(1)
-
     last = url.rstrip("/").split("/")[-1]
     return last if len(last) >= 6 else None
 
@@ -114,7 +161,7 @@ def extract_youtube(url: str, textFile: str):
         if os.path.exists(expected + ".mp3"):
             expected = expected + ".mp3"
         else:
-            raise HTTPException(500, "Audio file missing")
+            raise HTTPException(500, "Audio missing after download")
 
     transcript = call_whisper(expected)
 
@@ -128,11 +175,17 @@ def summarize_native(path, out):
     text = open(path).read()
     r = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages = [
-    {"role": "system", "content": "Summarize the user's text in the same language. Keep it extremely concise while preserving the full context and meaning. Use the minimal number of words needed."},
-    {"role": "user", "content": text},
-]
-,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Summarize the user's text in the same language. "
+                    "Keep it extremely concise while preserving full context and meaning. "
+                    "Use minimal words."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
     )
     s = r.choices[0].message.content
     open(out, "w").write(s)
@@ -142,16 +195,17 @@ def summarize_english(path, out):
     text = open(path).read()
     r = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages = [
-    {
-        "role": "system",
-        "content": "Summarize the user's text in English. Keep it extremely concise while preserving the full meaning and context. Use the fewest words possible."
-    },
-    {
-        "role": "user",
-        "content": text
-    }
-],
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Summarize the user's text in English. "
+                    "Keep it extremely concise but context-complete. "
+                    "Use the fewest words possible."
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
     )
     s = r.choices[0].message.content
     open(out, "w").write(s)
@@ -173,17 +227,19 @@ def fast_audio(inp, out):
     return out
 
 
-@app.post("/upload-audio")
+# ---------------------------------------------------------
+# ENDPOINTS — All PROTECTED with API KEY
+# ---------------------------------------------------------
+
+@app.post("/upload-audio", dependencies=[Depends(verify_key)])
 async def upload_audio(file: UploadFile = File(...)):
-    """Upload audio file endpoint"""
     p = f"uploads/{file.filename}"
     with open(p, "wb") as f:
         shutil.copyfileobj(file.file, f)
     return {"filename": p}
 
-@app.post("/upload-text")
+@app.post("/upload-text", dependencies=[Depends(verify_key)])
 async def upload_text(file: UploadFile = File(None), text: str = Form(None)):
-    """Upload text file or receive pasted text"""
     if file:
         p = f"uploads/{file.filename}"
         with open(p, "wb") as f:
@@ -196,79 +252,78 @@ async def upload_text(file: UploadFile = File(None), text: str = Form(None)):
             f.write(text)
         return {"text_file": p}
     else:
-        raise HTTPException(400, "Either file or text must be provided")
+        raise HTTPException(400, "No text provided")
 
-
-@app.post("/youtube-subtitles")
+@app.post("/youtube-subtitles", dependencies=[Depends(verify_key)])
 async def youtube_ep(data: YouTubeURL):
     out = "uploads/youtube.txt"
     extract_youtube(data.url, out)
     return {"text_file": out}
 
-@app.post("/upload-video")
+@app.post("/upload-video", dependencies=[Depends(verify_key)])
 async def upload_video(file: UploadFile = File(...)):
     p = f"uploads/{file.filename}"
     with open(p, "wb") as f:
         shutil.copyfileobj(file.file, f)
     return {"filename": p}
 
-@app.post("/extract-audio")
+@app.post("/extract-audio", dependencies=[Depends(verify_key)])
 async def extract_audio_ep(data: VideoFile):
     out = f"outputs/audio_{os.path.basename(data.video_file)}.mp3"
     extractAudio(data.video_file, out)
     return {"audio_file": out}
 
-@app.post("/transcribe-native")
+@app.post("/transcribe-native", dependencies=[Depends(verify_key)])
 async def tn(data: AudioFile):
     out = f"outputs/native_{os.path.basename(data.audio_file)}.txt"
     t = call_whisper(data.audio_file)
     open(out, "w").write(t)
     return {"text_file": out, "transcription": t}
 
-@app.post("/transcribe-english")
+@app.post("/transcribe-english", dependencies=[Depends(verify_key)])
 async def te(data: AudioFile):
     out = f"outputs/en_{os.path.basename(data.audio_file)}.txt"
     t = call_whisper(data.audio_file, language="en")
     open(out, "w").write(t)
     return {"text_file": out, "transcription": t}
 
-@app.post("/summarize-native")
+@app.post("/summarize-native", dependencies=[Depends(verify_key)])
 async def sn(text_file: str = Form(...)):
     out = f"outputs/sum_native_{os.path.basename(text_file)}.txt"
     s = summarize_native(text_file, out)
     return {"summary_file": out, "summary": s}
 
-@app.post("/summarize-english")
+@app.post("/summarize-english", dependencies=[Depends(verify_key)])
 async def se(text_file: str = Form(...)):
     out = f"outputs/sum_eng_{os.path.basename(text_file)}.txt"
     s = summarize_english(text_file, out)
     return {"summary_file": out, "summary": s}
 
-@app.post("/tts-native")
+@app.post("/tts-native", dependencies=[Depends(verify_key)])
 async def tn2(data: SummaryFile):
     out = f"outputs/audio_native_{os.path.basename(data.summary_file)}.mp3"
     tts_native(data.summary_file, out)
     return {"audio_file": out}
 
-@app.post("/tts-english")
+@app.post("/tts-english", dependencies=[Depends(verify_key)])
 async def te2(data: SummaryFile):
     out = f"outputs/audio_english_{os.path.basename(data.summary_file)}.mp3"
     tts_english(data.summary_file, out)
     return {"audio_file": out}
 
-@app.post("/fast-native")
+@app.post("/fast-native", dependencies=[Depends(verify_key)])
 async def fn(data: AudioFile):
     out = f"outputs/fast_native_{os.path.basename(data.audio_file)}.mp3"
     fast_audio(data.audio_file, out)
     return {"fast_audio_file": out}
 
-@app.post("/fast-english")
+@app.post("/fast-english", dependencies=[Depends(verify_key)])
 async def fe(data: AudioFile):
     out = f"outputs/fast_english_{os.path.basename(data.audio_file)}.mp3"
     fast_audio(data.audio_file, out)
     return {"fast_audio_file": out}
 
-@app.get("/files/{path:path}")
+@app.get("/files/{path:path}", dependencies=[Depends(verify_key)])
 async def get_file(path):
     if not os.path.exists(path):
         raise HTTPException(404)
@@ -276,7 +331,8 @@ async def get_file(path):
 
 @app.get("/")
 async def root():
-    return {"status": "OK — Fixed version with all endpoints"}
+    return {"status": "OK — Protected API is running"}
+
 
 if __name__ == "__main__":
     import uvicorn
